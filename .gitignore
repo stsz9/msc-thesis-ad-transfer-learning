@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+
+# Python environments
+pgs_env/
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# ADNI / phenotype / genetic data
+*.csv
+*.raw
+*.profiles
+
+# PLINK / genotype files
+*.bed
+*.bim
+*.fam
+*.pgen
+*.pvar
+*.psam
+
+# PCA / genetic outputs
+*.eigenval
+*.eigenvec
+
+# Participant IDs / text outputs
+*.txt
+
+# Generated results
+*.png
+*.out
+*.err
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
