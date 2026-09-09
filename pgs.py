@@ -134,7 +134,14 @@ print(f"{len(data)} people with measured trait + PGS")
 
 #positive control: check that height and BMI PGS correlate with measured height and BMI
 def pos_control(col, pgs_col, df):
-    r, p = stats.pearsonr(df[pgs_col], df[col])
+    df = df.copy()
+    df[pgs_col + "_z"] = (df[pgs_col] - df[pgs_col].mean()) / df[pgs_col].std()
+    df[col + "_z"] = (df[col] - df[col].mean()) / df[col].std()
+    zcol = pgs_col + "_z"
+    ycol = col + "_z"
+
+    r, p = stats.pearsonr(df[zcol], df[col])
+    r2 = r ** 2
     print(f"  Pearson r (PGS vs measured trait) = {r:.3f}   p = {p:.2e}")
     
     # variance explained by PGS alone
@@ -142,17 +149,21 @@ def pos_control(col, pgs_col, df):
 
     # model 1: regression adjusting for sex and age
     if ("PTGENDER" in df.columns and df["PTGENDER"].nunique() > 1) and "AGE" in df.columns:
-        df = df.copy()
         df["sex"] = df["PTGENDER"].astype("category")
-        m1 = smf.ols(f"{col} ~ {pgs_col} + AGE + C(sex)", data=df).fit()
-        beta = m1.params[pgs_col]; pv = m1.pvalues[pgs_col]
-        print(f"  Adjusted for sex and age: beta({pgs_col}) = {beta:.3f}, p = {pv:.2e}")
+        m1 = smf.ols(f"{ycol} ~ {zcol} + AGE + C(sex)", data=df).fit()
+        print(f"  Adjusted for age + sex: standardised beta = {m1.params[zcol]:.3f}, "f"p = {m1.pvalues[zcol]:.2e}")
     
     #model 2: regression adjusting for sex, age, and genetic PCs
     pc_terms = " + ".join(pc_cols)
-    m2 = smf.ols(f"{col} ~ {pgs_col} + AGE + C(sex) + {pc_terms}", data=df).fit()
-    print(f"  Adjusted for sex + age + PCs: beta = {m2.params[pgs_col]:.3f}, p = {m2.pvalues[pgs_col]:.2e}")
-    print(f"  Model R^2: {m1.rsquared:.3f} (no PCs) -> {m2.rsquared:.3f} (with PCs)")
+    m2 = smf.ols(f"{ycol} ~ {zcol} + AGE + C(sex) + {pc_terms}", data=df).fit()
+    print(f"  Adjusted for age + sex + PCs: standardised beta = {m2.params[zcol]:.3f}, "f"p = {m2.pvalues[zcol]:.2e}")
+
+    # incremental variance explained by the PGS
+    m_null = smf.ols(f"{ycol} ~ AGE + C(sex) + {pc_terms}", data=df).fit()          # covariates only
+    m_full = smf.ols(f"{ycol} ~ {zcol} + AGE + C(sex) + {pc_terms}", data=df).fit()  # + PGS
+    delta_r2 = m_full.rsquared - m_null.rsquared
+    print(f"  Model R^2: {100*m1.rsquared:.1f}% (no PCs) -> {100*m2.rsquared:.1f}% (with PCs)")
+    print(f"  Incremental R^2 from PGS (Full - Null) = {100*delta_r2:.1f}%")
 
     return r, p
  
@@ -340,6 +351,7 @@ X_AD_t2d_pgs = X_comorbidities_pgs.drop(columns=["depression_pgs", "hypertension
 X_AD_intelligence_edu = X_comorbidities_pgs.drop(columns=["depression_pgs", "hypertension_pgs", "t2d_pgs", "cad_pgs"]).copy()
 X_AD_intellince = model_data[ad_pgs_column + ["intelligence_pgs"]].copy()
 X_AD_edu = model_data[ad_pgs_column + ["education_pgs"]].copy()
+X_AD_covs = X_AD_pgs.drop(columns = ["APOE4_COUNT"]).copy() #Model 2 + AD-PGS without APOE4
 y = model_data["ever_AD"].copy()
 
 print("model_data:", len(model_data), "| cases:", model_data["ever_AD"].sum(),
@@ -356,6 +368,7 @@ run_logistic_regression(X_AD_intelligence_edu, y, param_grid, num_trials=30, nam
 run_logistic_regression(X_comorbidities_pgs, y, param_grid, num_trials=30, name="Comorbidities PGS")
 run_logistic_regression(X_AD_intellince, y, param_grid, num_trials=30, name="AD Intelligence PGS")
 run_logistic_regression(X_AD_edu, y, param_grid, num_trials=30, name="AD Education PGS")
+run_logistic_regression(X_AD_covs, y, param_grid, num_trials=30, name="AD PGS without APOE4")
 
 #gradient boosting model for comparison
 def run_xgb_model(X, y, num_trials=30, name=""):
@@ -637,7 +650,7 @@ shared_cols = ["AGE", "PTGENDER", "PTEDUCAT", "APOE4_COUNT"]
 
 # Run the genotype-PCA arm for several K
 print("\nBENCHMARK: genotype-PCA representation")
-for K in [10, 20, 50, 100]:
+for K in [1, 2, 5, 10, 20, 50, 100]:
     gpc_cols = [f"gPC{i}" for i in range(1, K + 1)]
     X_geno = benchmark_data[shared_cols + gpc_cols].copy()
     run_logistic_regression(X_geno, benchmark_y, param_grid, num_trials=30, name=f"Genotype-PCA  (K={K})  + covariates + APOE")
@@ -654,7 +667,7 @@ X_pgs_bench_ad_only = benchmark_data[["alzheimers_pgs"]].copy()
 run_logistic_regression(X_pgs_bench_ad_only, benchmark_y, param_grid, num_trials=30, name="AD-PGS alone (no covariates)")
 
 # genotype-PCs alone, for each K
-for K in [10, 20, 50, 100]:
+for K in [1, 2, 5, 10, 20, 50, 100]:
     gpc_cols = [f"gPC{i}" for i in range(1, K + 1)]
     X_geno_only = benchmark_data[gpc_cols].copy()
     run_logistic_regression(X_geno_only, benchmark_y, param_grid, num_trials=30, name=f"Genotype-PCA alone (K={K}, no covariates)")
